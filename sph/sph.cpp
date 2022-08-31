@@ -12,6 +12,10 @@
 #include "c_api_test_utils.h"
 #include "taichi/taichi_core.h"
 #include "taichi/taichi_vulkan.h"
+#include "taichi/ui/backends/vulkan/scene.h"
+#include "taichi/ui/backends/vulkan/window.h"
+#include "taichi/ui/backends/vulkan/canvas.h"
+
 
 #define NR_PARTICLES 8000
 
@@ -292,29 +296,79 @@ void run(TiArch arch, const std::string& folder_dir) {
 
     renderer->set_background_color({0.6, 0.6, 0.6});
 
-    /* --------------------- */
-    /* Execution & Rendering */
-    /* --------------------- */
-    while (!glfwWindowShouldClose(window)) {
-        for(int i = 0; i < SUBSTEPS; i++) {
-            ti_launch_kernel(runtime, k_update_density, 3, &k_update_density_args[0]);
-            ti_launch_kernel(runtime, k_update_force, 6, &k_update_force_args[0]);
-            ti_launch_kernel(runtime, k_advance, 3, &k_advance_args[0]);
-            ti_launch_kernel(runtime, k_boundary_handle, 3, &k_boundary_handle_args[0]);
-        }
-        ti_wait(runtime);
 
-        // Render elements
-        renderer->circles(circles);
-        renderer->draw_frame(gui.get());
-        renderer->swap_chain().surface().present_image();
-        renderer->prepare_for_next_frame();
+    taichi::ui::SceneBase *scene;
+    scene = new taichi::ui::vulkan::Scene();
 
-        glfwSwapBuffers(window);
-        glfwPollEvents();
+
+    taichi::ui::RenderableInfo renderable_info;
+    renderable_info.vbo = f_info;
+    // renderable_info.raw_vbo_ptr = 
+    renderable_info.has_user_customized_draw = false;
+    renderable_info.has_per_vertex_color = false;
+
+    taichi::ui::ParticlesInfo info;
+    info.renderable_info = renderable_info;
+    info.color = glm::vec3(0.5, 0.5, 0.5);
+    info.radius = 0.1f;
+
+    scene->particles(info);
+
+// PyWindow(get_runtime().prog, name, res, vsync,
+//                                         show_window, package_path, ti_arch,
+//                                         is_packed)
+
+    // auto ti_arch = get_taichi_arch(arch);
+    // taichi::ui::AppConfig config = {"Test",    640, 480,
+    //                     /*vsync*/ false,   /*show_window*/ true,        "/home/yuzhang/Work/taichi-1/python/taichi/",
+    //                     ti_arch, /*is_packed_mode*/ false};
+
+    // // todo: support other ggui backends
+    // if (!(taichi::arch_is_cpu(ti_arch) || ti_arch == taichi::Arch::vulkan ||
+    //       ti_arch == taichi::Arch::cuda)) {
+    //   throw std::runtime_error(
+    //       "GGUI is only supported on cpu, vulkan and cuda backends");
+    // }
+    // if (!taichi::lang::vulkan::is_vulkan_api_available()) {
+    //   throw std::runtime_error("Vulkan must be available for GGUI");
+    // }
+
+    // auto* ti_window = new taichi::ui::vulkan::Window(renderer->app_context().prog(), config);
+
+    // auto* ti_window = new taichi::ui::vulkan::Window("test", (640, 480));
+    auto* canvas = new taichi::ui::vulkan::Canvas(renderer.get());
+    auto* camera = new taichi::ui::Camera();
+    camera->position = glm::vec3(0.0, 0.0, 1.5);
+    camera->lookat = glm::vec3(0.0, 0.0, 0);
+    scene->set_camera(*camera);
+
+    while(1) {
+        canvas->scene(scene);
     }
 
-    renderer->cleanup();
+    // /* --------------------- */
+    // /* Execution & Rendering */
+    // /* --------------------- */
+    // while (!glfwWindowShouldClose(window)) {
+    //     for(int i = 0; i < SUBSTEPS; i++) {
+    //         ti_launch_kernel(runtime, k_update_density, 3, &k_update_density_args[0]);
+    //         ti_launch_kernel(runtime, k_update_force, 6, &k_update_force_args[0]);
+    //         ti_launch_kernel(runtime, k_advance, 3, &k_advance_args[0]);
+    //         ti_launch_kernel(runtime, k_boundary_handle, 3, &k_boundary_handle_args[0]);
+    //     }
+    //     ti_wait(runtime);
+
+    //     // Render elements
+    //     renderer->circles(circles);
+    //     renderer->draw_frame(gui.get());
+    //     renderer->swap_chain().surface().present_image();
+    //     renderer->prepare_for_next_frame();
+
+    //     glfwSwapBuffers(window);
+    //     glfwPollEvents();
+    // }
+
+    // renderer->cleanup();
 }
 
 int main(int argc, char *argv[]) {
