@@ -15,6 +15,7 @@
 #include "taichi/ui/backends/vulkan/scene.h"
 #include "taichi/ui/backends/vulkan/window.h"
 #include "taichi/ui/backends/vulkan/canvas.h"
+#include "glm/gtx/string_cast.hpp"
 
 
 #define NR_PARTICLES 8000
@@ -116,15 +117,117 @@ static taichi::ui::FieldSource get_field_source(TiArch arch) {
     }
 }
 
+glm::vec3 euler_to_vec(float yaw, float pitch) {
+    auto v = glm::vec3(0.0, 0.0, 0.0);
+    v[0] = -sin(yaw) * cos(pitch);
+    v[1] = sin(pitch);
+    v[2] = -cos(yaw) * cos(pitch);
+    return v;
+}
 
-void run(TiArch arch, const std::string& folder_dir) {
+
+void vec_to_euler(glm::vec3 v, float& yaw, float& pitch) {
+    v = glm::normalize(v);
+    pitch = asin(v[1]);
+
+    auto sin_yaw = -v[0] / cos(pitch);
+    auto cos_yaw = -v[2] / cos(pitch);
+
+    auto eps = 1e-6;
+
+    if(abs(sin_yaw) < eps)
+        yaw = 0;
+    else {
+        yaw = acos(cos_yaw);
+        if(sin_yaw < 0)
+            yaw = -yaw;
+    }
+}
+
+
+void handle_user_inputs(taichi::ui::Camera* camera, GLFWwindow* window, int win_width, int win_height) {
+    
+    static float movement_speed = 0.1;
+    static bool first_time_detect_mouse_input = true;
+    static double last_mouse_x, last_mouse_y, curr_mouse_x, curr_mouse_y;
+
+    auto front = glm::normalize(camera->lookat - camera->position);
+    auto position_change = glm::vec3(0.0, 0.0, 0.0);
+    auto left = glm::cross(camera->up, front);
+    auto up = camera->up;
+    if(glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+        position_change += front * movement_speed;
+    }
+    if(glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+        position_change += -front * movement_speed;
+    }
+    if(glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+        position_change += left * movement_speed;
+    }
+    if(glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+        position_change += -left * movement_speed;
+    }
+    if(glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+        position_change += up * movement_speed;
+    }
+    if(glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+        position_change += -up * movement_speed;
+    }
+    camera->position = camera->position + position_change;
+    camera->lookat = camera->lookat + position_change;
+
+
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+
+        glfwGetCursorPos(window, &curr_mouse_x, &curr_mouse_y);
+        curr_mouse_x /= win_width;
+        curr_mouse_y /= win_height;
+        curr_mouse_y = 1.0 - curr_mouse_y;
+
+        if(first_time_detect_mouse_input) {
+            first_time_detect_mouse_input = false;
+            last_mouse_x = curr_mouse_x;
+            last_mouse_y = curr_mouse_y;
+        }
+
+        auto dx = curr_mouse_x - last_mouse_x;
+        auto dy = curr_mouse_y - last_mouse_y;
+
+        float yaw, pitch;
+        vec_to_euler(front, yaw, pitch);
+        float yaw_speed = 2;
+        float pitch_speed = 2;
+
+        yaw -= dx * yaw_speed;
+        pitch += dy * pitch_speed;
+
+        float pitch_limit = glm::pi<float>() / 2 * 0.99;
+        if(pitch > pitch_limit)
+            pitch = pitch_limit;
+        else if(pitch < -pitch_limit)
+            pitch = -pitch_limit;
+
+        front = euler_to_vec(yaw, pitch);
+        camera->lookat = glm::vec3(camera->position + front);
+        camera->up = glm::vec3(0, 1, 0);
+
+        last_mouse_x = curr_mouse_x;
+        last_mouse_y = curr_mouse_y;
+    }else{
+        first_time_detect_mouse_input = true;
+    }
+}
+
+void run(TiArch arch, const std::string& folder_dir, const std::string& package_path) {
     /* --------------------- */
     /* Render Initialization */
     /* --------------------- */
     // Init gl window
+    int win_width = 800;
+    int win_height = 800;
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(512, 512, "Taichi show", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(win_width, win_height, "Taichi show", NULL, NULL);
     if (window == NULL) {
         std::cout << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -134,11 +237,11 @@ void run(TiArch arch, const std::string& folder_dir) {
     // Create a GGUI configuration
     taichi::ui::AppConfig app_config;
     app_config.name         = "SPH";
-    app_config.width        = 512;
-    app_config.height       = 512;
+    app_config.width        = win_width;
+    app_config.height       = win_height;
     app_config.vsync        = true;
     app_config.show_window  = false;
-    app_config.package_path = "."; // make it flexible later
+    app_config.package_path = package_path; // make it flexible later
     app_config.ti_arch      = get_taichi_arch(arch);
 
     // Create GUI & renderer
@@ -235,7 +338,7 @@ void run(TiArch arch, const std::string& folder_dir) {
     TiArgument k_update_force_args[6];
     TiArgument k_advance_args[3];
     TiArgument k_boundary_handle_args[3];
-    
+
     k_initialize_args[0] = boundary_box_.arg_;
     k_initialize_args[1] = spawn_box_.arg_;
     k_initialize_args[2] = N_.arg_;
@@ -287,94 +390,64 @@ void run(TiArch arch, const std::string& folder_dir) {
     f_info.dtype        = taichi::lang::PrimitiveType::f32;
     f_info.snode        = nullptr;
     f_info.dev_alloc    = pos_devalloc;
-    taichi::ui::CirclesInfo circles;
-    circles.renderable_info.has_per_vertex_color = false;
-    circles.renderable_info.vbo_attrs = taichi::ui::VertexAttributes::kPos;
-    circles.renderable_info.vbo                  = f_info;
-    circles.color                                = {0.8, 0.4, 0.1};
-    circles.radius                               = 0.005f; // 0.0015f looks unclear on desktop
 
-    renderer->set_background_color({0.6, 0.6, 0.6});
+    // renderer->set_background_color({0.6, 0.6, 0.6});
 
-
-    taichi::ui::SceneBase *scene;
-    scene = new taichi::ui::vulkan::Scene();
-
+    auto scene = std::make_unique<taichi::ui::vulkan::Scene>();
 
     taichi::ui::RenderableInfo renderable_info;
     renderable_info.vbo = f_info;
-    // renderable_info.raw_vbo_ptr = 
     renderable_info.has_user_customized_draw = false;
     renderable_info.has_per_vertex_color = false;
 
-    taichi::ui::ParticlesInfo info;
-    info.renderable_info = renderable_info;
-    info.color = glm::vec3(0.5, 0.5, 0.5);
-    info.radius = 0.1f;
+    taichi::ui::ParticlesInfo particles;
+    particles.renderable_info = renderable_info;
+    particles.color = glm::vec3(0.3, 0.5, 0.8);
+    particles.radius = 0.01f;
+    particles.object_id = 0;
 
-    scene->particles(info);
+    auto camera = std::make_unique<taichi::ui::Camera>();
+    camera->position = glm::vec3(0.0, 1.5, 1.5);
+    camera->lookat = glm::vec3(0.0, 0.0, 0.0);
+    camera->up = glm::vec3(0.0, 1.0, 0);
 
-// PyWindow(get_runtime().prog, name, res, vsync,
-//                                         show_window, package_path, ti_arch,
-//                                         is_packed)
+    /* --------------------- */
+    /* Execution & Rendering */
+    /* --------------------- */
+    while (!glfwWindowShouldClose(window)) {
+        for(int i = 0; i < SUBSTEPS; i++) {
+            ti_launch_kernel(runtime, k_update_density, 3, &k_update_density_args[0]);
+            ti_launch_kernel(runtime, k_update_force, 6, &k_update_force_args[0]);
+            ti_launch_kernel(runtime, k_advance, 3, &k_advance_args[0]);
+            ti_launch_kernel(runtime, k_boundary_handle, 3, &k_boundary_handle_args[0]);
+        }
+        ti_wait(runtime);
 
-    // auto ti_arch = get_taichi_arch(arch);
-    // taichi::ui::AppConfig config = {"Test",    640, 480,
-    //                     /*vsync*/ false,   /*show_window*/ true,        "/home/yuzhang/Work/taichi-1/python/taichi/",
-    //                     ti_arch, /*is_packed_mode*/ false};
+        handle_user_inputs(camera.get(), window, win_width, win_height);
 
-    // // todo: support other ggui backends
-    // if (!(taichi::arch_is_cpu(ti_arch) || ti_arch == taichi::Arch::vulkan ||
-    //       ti_arch == taichi::Arch::cuda)) {
-    //   throw std::runtime_error(
-    //       "GGUI is only supported on cpu, vulkan and cuda backends");
-    // }
-    // if (!taichi::lang::vulkan::is_vulkan_api_available()) {
-    //   throw std::runtime_error("Vulkan must be available for GGUI");
-    // }
+        scene->set_camera(*camera);
+        scene->point_light(glm::vec3(2.0, 2.0, 2.0), glm::vec3(1.0, 1.0, 1.0));
+        scene->particles(particles);
 
-    // auto* ti_window = new taichi::ui::vulkan::Window(renderer->app_context().prog(), config);
+        renderer->scene(scene.get());
 
-    // auto* ti_window = new taichi::ui::vulkan::Window("test", (640, 480));
-    auto* canvas = new taichi::ui::vulkan::Canvas(renderer.get());
-    auto* camera = new taichi::ui::Camera();
-    camera->position = glm::vec3(0.0, 0.0, 1.5);
-    camera->lookat = glm::vec3(0.0, 0.0, 0);
-    scene->set_camera(*camera);
+        // Render elements
+        renderer->draw_frame(gui.get());
+        renderer->swap_chain().surface().present_image();
+        renderer->prepare_for_next_frame();
 
-    while(1) {
-        canvas->scene(scene);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
     }
 
-    // /* --------------------- */
-    // /* Execution & Rendering */
-    // /* --------------------- */
-    // while (!glfwWindowShouldClose(window)) {
-    //     for(int i = 0; i < SUBSTEPS; i++) {
-    //         ti_launch_kernel(runtime, k_update_density, 3, &k_update_density_args[0]);
-    //         ti_launch_kernel(runtime, k_update_force, 6, &k_update_force_args[0]);
-    //         ti_launch_kernel(runtime, k_advance, 3, &k_advance_args[0]);
-    //         ti_launch_kernel(runtime, k_boundary_handle, 3, &k_boundary_handle_args[0]);
-    //     }
-    //     ti_wait(runtime);
-
-    //     // Render elements
-    //     renderer->circles(circles);
-    //     renderer->draw_frame(gui.get());
-    //     renderer->swap_chain().surface().present_image();
-    //     renderer->prepare_for_next_frame();
-
-    //     glfwSwapBuffers(window);
-    //     glfwPollEvents();
-    // }
-
-    // renderer->cleanup();
+    renderer->cleanup();
 }
 
 int main(int argc, char *argv[]) {
-  assert(argc == 3);
+  assert(argc == 4);
   std::string aot_path = argv[1];
-  std::string arch_name = argv[2];
+  std::string package_path = argv[2];
+  std::string arch_name = argv[3];
 
   TiArch arch;
   if(arch_name == "cuda") arch = TiArch::TI_ARCH_CUDA;
@@ -382,7 +455,7 @@ int main(int argc, char *argv[]) {
   else if(arch_name == "x64") arch = TiArch::TI_ARCH_X64;
   else assert(false);
 
-  run(arch, aot_path);
+  run(arch, aot_path, package_path);
 
   return 0;
 }
