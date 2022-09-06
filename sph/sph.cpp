@@ -315,7 +315,7 @@ void run(TiArch arch, const std::string& folder_dir, const std::string& package_
                              vec3_shape.data(), 1,
                              false/*host_read*/,
                              false/*host_write*/);
-    
+
     capi::utils::TiNdarrayAndMem pos_;
     taichi::lang::DeviceAllocation pos_devalloc;
     if(arch == TiArch::TI_ARCH_VULKAN) {
@@ -331,7 +331,7 @@ void run(TiArch arch, const std::string& folder_dir, const std::string& package_
                             );
         pos_devalloc = get_devalloc(pos_.runtime_, pos_.memory_);
     }
-  
+
     TiArgument k_initialize_args[3];
     TiArgument k_initialize_particle_args[4];
     TiArgument k_update_density_args[3];
@@ -406,6 +406,11 @@ void run(TiArch arch, const std::string& folder_dir, const std::string& package_
     particles.radius = 0.01f;
     particles.object_id = 0;
 
+    taichi::ui::MeshInfo meshes;
+    meshes.renderable_info = renderable_info;
+    meshes.color = glm::vec3(0.3, 0.5, 0.8);
+    meshes.object_id = 0;
+
     auto camera = std::make_unique<taichi::ui::Camera>();
     camera->position = glm::vec3(0.0, 1.5, 1.5);
     camera->lookat = glm::vec3(0.0, 0.0, 0.0);
@@ -428,6 +433,7 @@ void run(TiArch arch, const std::string& folder_dir, const std::string& package_
         scene->set_camera(*camera);
         scene->point_light(glm::vec3(2.0, 2.0, 2.0), glm::vec3(1.0, 1.0, 1.0));
         scene->particles(particles);
+        scene->mesh(meshes);
 
         renderer->scene(scene.get());
 
